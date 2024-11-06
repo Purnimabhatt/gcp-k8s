@@ -1,0 +1,95 @@
+# Copyright 2022-2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+timeout: 21600s
+steps:
+- id: prune unchanged directories
+  name: gcr.io/cloud-builders/git
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      set -e
+      # If this is a periodic tests, skip the pruning and run all tests
+      if [[ "$_PERIODIC" == "true" ]]; then
+        echo "_PERIODIC is true, running all tests."
+        exit 0
+      fi
+
+      git fetch --unshallow
+      git diff origin/${_BASE_BRANCH} --name-only > _changed_files
+      sed 's/\/.*/\//' _changed_files > _changed_folders
+
+      # Do not prune if changing tests themselves
+      _INFRA_FOLDERS="build test .github"
+      for d in _changed_folders; do
+        if [[ "${_INFRA_FOLDERS}" =~ "$d" ]]; then
+          echo "Infrastructure folders have changed; no tests will be pruned."
+          exit 0 # do not prune
+        fi
+      done
+
+      for d in */; do
+          if ! grep -q "^$d" _changed_folders && [[ "$d" != "test/" ]]; then
+            rm -rf $d;
+          fi
+      done
+
+      # Report remaining folders
+      echo Folders in scope for tests:
+      for d in */; do echo $d; done
+
+- id: prepare
+  name: 'gcr.io/cloud-foundation-cicd/$_DOCKER_IMAGE_DEVELOPER_TOOLS:$_DOCKER_TAG_VERSION_DEVELOPER_TOOLS'
+  args: ['/bin/bash', '-c', 'source /usr/local/bin/task_helper_functions.sh && prepare_environment']
+  env:
+  - 'TF_VAR_org_id=$_ORG_ID'
+  - 'TF_VAR_folder_id=$_FOLDER_ID'
+  - 'TF_VAR_billing_account=$_BILLING_ACCOUNT'
+- id: init
+  name: 'gcr.io/cloud-foundation-cicd/$_DOCKER_IMAGE_DEVELOPER_TOOLS:$_DOCKER_TAG_VERSION_DEVELOPER_TOOLS'
+  args: ['/bin/bash', '-c', 'RUN_STAGE=init go test -v -timeout 0']
+  dir: test/integration
+  waitFor:
+    - prepare
+- id: test-samples-0
+  name: 'gcr.io/cloud-foundation-cicd/$_DOCKER_IMAGE_DEVELOPER_TOOLS:$_DOCKER_TAG_VERSION_DEVELOPER_TOOLS'
+  args: ['/bin/bash', '-c', 'go test -v -timeout 0 -run TestSamples/0']
+  dir: test/integration
+  waitFor:
+    - init
+- id: test-samples-1
+  name: 'gcr.io/cloud-foundation-cicd/$_DOCKER_IMAGE_DEVELOPER_TOOLS:$_DOCKER_TAG_VERSION_DEVELOPER_TOOLS'
+  args: ['/bin/bash', '-c', 'go test -v -timeout 0 -run TestSamples/1']
+  dir: test/integration
+  waitFor:
+    - init
+- id: test-samples-2
+  name: 'gcr.io/cloud-foundation-cicd/$_DOCKER_IMAGE_DEVELOPER_TOOLS:$_DOCKER_TAG_VERSION_DEVELOPER_TOOLS'
+  args: ['/bin/bash', '-c', 'go test -v -timeout 0 -run TestSamples/2']
+  dir: test/integration
+  waitFor:
+    - init
+- id: test-samples-3
+  name: 'gcr.io/cloud-foundation-cicd/$_DOCKER_IMAGE_DEVELOPER_TOOLS:$_DOCKER_TAG_VERSION_DEVELOPER_TOOLS'
+  args: ['/bin/bash', '-c', 'go test -v -timeout 0 -run TestSamples/3']
+  dir: test/integration
+  waitFor:
+    - init
+tags:
+- 'ci'
+- 'integration'
+substitutions:
+  _DOCKER_IMAGE_DEVELOPER_TOOLS: 'cft/developer-tools'
+  _DOCKER_TAG_VERSION_DEVELOPER_TOOLS: '1.22'
